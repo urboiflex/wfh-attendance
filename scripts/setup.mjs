@@ -10,8 +10,6 @@ const secrets = [
   'INTERNAL_SECRET',
   'DEMO_HR_PASSWORD',
   'DEMO_EMPLOYEE_PASSWORD',
-  'DEMO_HR_INVITE',
-  'DEMO_EMPLOYEE_INVITE',
 ];
 
 try {

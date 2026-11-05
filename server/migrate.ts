@@ -69,16 +69,14 @@ async function migrate() {
     }
     provisionRuntimeUsers();
     for (const account of [
-      ['HR_ADMIN', null, 'Dina HR', 'hr@example.test', 'DEMO_HR_PASSWORD', false],
-      ['EMPLOYEE', 'EMP-001', 'Raka Pratama', 'employee@example.test', 'DEMO_EMPLOYEE_PASSWORD', false],
-      ['HR_ADMIN', null, 'Admin Undangan', 'hr.invite@example.test', 'DEMO_HR_INVITE', true],
-      ['EMPLOYEE', 'EMP-002', 'Karyawan Undangan', 'employee.invite@example.test', 'DEMO_EMPLOYEE_INVITE', true],
+      ['HR_ADMIN', null, 'Dina HR', 'hr@example.test', 'DEMO_HR_PASSWORD'],
+      ['EMPLOYEE', 'EMP-001', 'Raka Pratama', 'employee@example.test', 'DEMO_EMPLOYEE_PASSWORD'],
     ] as const) {
-      const [role, code, name, email, secret, requiresActivation] = account;
+      const [role, code, name, email, secret] = account;
       await connection.execute(`
-        INSERT INTO users (role, employee_code, display_name, email, password_hash, requires_activation)
-        VALUES (?, ?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id
-      `, [role, code, name, email, await hashPassword(env(secret)), requiresActivation]);
+        INSERT INTO users (role, employee_code, display_name, email, password_hash)
+        VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id
+      `, [role, code, name, email, await hashPassword(env(secret))]);
     }
     console.log('Schema, runtime accounts, and demo users are ready.');
   } finally {

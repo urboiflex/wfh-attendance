@@ -49,11 +49,6 @@ function email(value: unknown): string {
   return input;
 }
 
-function role(value: unknown): Role {
-  if (value !== 'HR_ADMIN' && value !== 'EMPLOYEE') throw new BadRequestException('Pilih jenis akun.');
-  return value;
-}
-
 function positive(value: unknown): number {
   const parsed = Number(value);
   if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > 4_294_967_295) throw new BadRequestException('ID tidak valid.');
@@ -136,40 +131,20 @@ class ApiController {
     return { status: 'ready' };
   }
 
-  @Post('auth/login')
+  @Post('auth/:portal/login')
   @HttpCode(200)
-  async login(@Req() request: Request, @Body() raw: unknown, @Res({ passthrough: true }) response: Response) {
-    const body = validate(raw, ['email', 'password', 'role']);
+  async login(@Param('portal') portal: string, @Req() request: Request, @Body() raw: unknown, @Res({ passthrough: true }) response: Response) {
+    if (portal !== 'karyawan' && portal !== 'admin') throw new NotFoundException();
+    const requestedRole = portal === 'admin' ? 'HR_ADMIN' : 'EMPLOYEE';
+    const body = validate(raw, ['email', 'password']);
     const address = email(body.email);
     const password = string(body.password, 'Kata sandi', 1, 128, false);
-    const requestedRole = role(body.role);
     limitAttempts(request, address);
     const user = await findLogin(address);
     const verified = await verifyPassword(password, user?.passwordHash ?? await dummyHash);
     if (!verified || !user?.active || user.pending || user.role !== requestedRole) throw new UnauthorizedException(loginError);
     response.cookie('wfh_session', jwt.sign({ sub: user.id, role: user.role }), { ...cookie, maxAge: 7_200_000 });
     return profile(user);
-  }
-
-  @Post('auth/signup')
-  async signup(@Req() request: Request, @Body() raw: unknown) {
-    const body = validate(raw, ['email', 'inviteCode', 'password', 'role']);
-    const address = email(body.email);
-    const requestedRole = role(body.role);
-    const code = string(body.inviteCode, 'Kode undangan', 1, 128);
-    const password = string(body.password, 'Kata sandi', 12, 128, false);
-    if (password === code) throw new BadRequestException('Buat kata sandi yang berbeda dari kode undangan.');
-    limitAttempts(request, address);
-    const user = await findLogin(address);
-    const verified = await verifyPassword(code, user?.passwordHash ?? await dummyHash);
-    const invalid = 'Kode undangan atau jenis akun tidak cocok, atau akun sudah aktif.';
-    if (!verified || !user?.active || !user.pending || user.role !== requestedRole) throw new UnauthorizedException(invalid);
-    const [result] = await pool.execute<ResultSetHeader>(
-      'UPDATE users SET password_hash = ?, requires_activation = FALSE WHERE id = ? AND password_hash = ? AND requires_activation AND is_active',
-      [await hashPassword(password), user.id, user.passwordHash!],
-    );
-    if (!result.affectedRows) throw new UnauthorizedException(invalid);
-    return { message: 'Akun sudah aktif. Silakan masuk.' };
   }
 
   @Get('auth/me')
@@ -189,7 +164,7 @@ class ApiController {
     const page = query.page ? positive(query.page) : 1;
     if (page > 10000 || (query.active !== undefined && query.active !== 'true')) throw new BadRequestException();
     const [rows] = await pool.execute<RowDataPacket[]>(
-      `SELECT ${userFields} FROM users WHERE role = 'EMPLOYEE' ${query.active ? 'AND is_active = TRUE' : ''}
+      `SELECT ${userFields} FROM users WHERE role = 'EMPLOYEE' ${query.active ? 'AND is_active = TRUE AND requires_activation = FALSE' : ''}
        ORDER BY id DESC LIMIT 51 OFFSET ?`, [(page - 1) * 50],
     );
     return { items: rows.slice(0, 50), hasNext: rows.length > 50 };
@@ -206,17 +181,17 @@ class ApiController {
   @Post('employees')
   async createEmployee(@Req() request: Request, @Body() raw: unknown) {
     await authenticate(request, 'HR_ADMIN');
-    const body = validate(raw, ['employeeCode', 'displayName', 'email']);
+    const body = validate(raw, ['employeeCode', 'displayName', 'email', 'password']);
     const code = string(body.employeeCode, 'Kode karyawan', 1, 24).toUpperCase();
     const name = string(body.displayName, 'Nama', 2, 100);
     const address = email(body.email);
-    const inviteCode = randomBytes(18).toString('base64url');
+    const password = string(body.password, 'Kata sandi awal', 12, 128, false);
     try {
       const [result] = await pool.execute<ResultSetHeader>(
-        `INSERT INTO users (role, employee_code, display_name, email, password_hash, requires_activation)
-         VALUES ('EMPLOYEE', ?, ?, ?, ?, TRUE)`, [code, name, address, await hashPassword(inviteCode)],
+        `INSERT INTO users (role, employee_code, display_name, email, password_hash)
+         VALUES ('EMPLOYEE', ?, ?, ?, ?)`, [code, name, address, await hashPassword(password)],
       );
-      return { id: result.insertId, inviteCode };
+      return { id: result.insertId };
     } catch (error) {
       if (isDuplicate(error)) throw new ConflictException('Kode karyawan atau email sudah digunakan.');
       throw error;
@@ -227,13 +202,22 @@ class ApiController {
   async updateEmployee(@Req() request: Request, @Param('id') id: string, @Body() raw: unknown) {
     await authenticate(request, 'HR_ADMIN');
     const employeeId = positive(id);
-    const body = validate(raw, ['displayName', 'email']);
+    const body = validate(raw, ['displayName', 'email', 'initialPassword']);
     const name = string(body.displayName, 'Nama', 2, 100);
     const address = email(body.email);
     try {
-      const [result] = await pool.execute<ResultSetHeader>(
-        "UPDATE users SET display_name = ?, email = ? WHERE id = ? AND role = 'EMPLOYEE'", [name, address, employeeId],
-      );
+      const [result] = body.initialPassword === undefined
+        ? await pool.execute<ResultSetHeader>(
+          "UPDATE users SET display_name = ?, email = ? WHERE id = ? AND role = 'EMPLOYEE'", [name, address, employeeId],
+        )
+        : await pool.execute<ResultSetHeader>(
+          `UPDATE users SET display_name = ?, email = ?, password_hash = ?, requires_activation = FALSE
+           WHERE id = ? AND role = 'EMPLOYEE' AND is_active = TRUE AND requires_activation = TRUE`,
+          [name, address, await hashPassword(string(body.initialPassword, 'Kata sandi awal', 12, 128, false)), employeeId],
+        );
+      if (!result.affectedRows && body.initialPassword !== undefined && (await findUser(employeeId))?.role === 'EMPLOYEE') {
+        throw new ConflictException('Akun ini sudah memiliki kata sandi atau tidak aktif.');
+      }
       if (!result.affectedRows) throw new NotFoundException('Karyawan tidak ditemukan.');
       return findUser(employeeId);
     } catch (error) {

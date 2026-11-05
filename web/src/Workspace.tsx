@@ -113,7 +113,7 @@ function EmployeeList() {
   const [activeOnly, setActiveOnly] = useState(false);
   const [result, setResult] = useState<Page<Employee>>();
   const [edit, setEdit] = useState<Employee | null>();
-  const [invite, setInvite] = useState<{ email: string; code: string }>();
+  const [notice, setNotice] = useState('');
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
@@ -133,11 +133,15 @@ function EmployeeList() {
     const body = { displayName: fields.get('displayName'), email };
     setBusy(true);
     setError('');
+    setNotice('');
     try {
-      if (edit) await api(`/employees/${edit.id}`, json('PATCH', body));
-      else {
-        const created = await api<{ inviteCode: string }>('/employees', json('POST', { ...body, employeeCode: fields.get('employeeCode') }));
-        setInvite({ email, code: created.inviteCode });
+      if (edit) {
+        const initialPassword = fields.get('password');
+        await api(`/employees/${edit.id}`, json('PATCH', initialPassword ? { ...body, initialPassword } : body));
+        setNotice('Data karyawan diperbarui.');
+      } else {
+        await api('/employees', json('POST', { ...body, employeeCode: fields.get('employeeCode'), password: fields.get('password') }));
+        setNotice('Akun karyawan dibuat. Sampaikan kata sandi awal secara langsung kepada karyawan.');
         setPage(1);
       }
       setEdit(undefined);
@@ -149,6 +153,7 @@ function EmployeeList() {
   async function deactivate(employee: Employee) {
     if (!confirm(`Nonaktifkan akun ${employee.displayName}?`)) return;
     setError('');
+    setNotice('');
     try {
       await api(`/employees/${employee.id}`, { method: 'DELETE' });
       setRevision((value) => value + 1);
@@ -156,25 +161,28 @@ function EmployeeList() {
   }
 
   return <section className="surface">
-    <div className="section-bar"><h2>Data karyawan</h2><button className="primary" onClick={() => { setEdit(null); setInvite(undefined); setError(''); }}>Tambah karyawan</button></div>
+    <div className="section-bar"><h2>Data karyawan</h2><button className="primary" onClick={() => { setEdit(null); setNotice(''); setError(''); }}>Tambah karyawan</button></div>
     <ErrorText value={error} />
-    {invite && <div className="success-message" role="status"><strong>Undangan untuk {invite.email}</strong><br />
-      Bagikan kode ini secara langsung. <code>{invite.code}</code></div>}
+    {notice && <p className="success-message" role="status">{notice}</p>}
     {edit !== undefined && <form className="employee-form" onSubmit={save} key={edit?.id ?? 'new'}>
       {!edit && <label>Kode karyawan<input name="employeeCode" required maxLength={24} /></label>}
       <label>Nama lengkap<input name="displayName" required defaultValue={edit?.displayName} maxLength={100} /></label>
       <label>Email<input name="email" type="email" required defaultValue={edit?.email} maxLength={254} /></label>
+      {(!edit || (!!edit.pending && !!edit.active)) && <label>Kata sandi awal
+        <input name="password" type="password" autoComplete="new-password" minLength={12} maxLength={128}
+          placeholder="Minimal 12 karakter" required />
+      </label>}
       <div className="actions"><button className="primary" disabled={busy}>Simpan</button>
         <button type="button" className="secondary" onClick={() => setEdit(undefined)}>Batal</button></div>
     </form>}
-    <label className="filter-check"><input type="checkbox" checked={activeOnly} onChange={(event) => { setPage(1); setError(''); setActiveOnly(event.currentTarget.checked); }} /> Hanya akun aktif atau menunggu aktivasi</label>
+    <label className="filter-check"><input type="checkbox" checked={activeOnly} onChange={(event) => { setPage(1); setError(''); setActiveOnly(event.currentTarget.checked); }} /> Hanya akun aktif</label>
     {!result ? !error && <p role="status">Memuat data…</p> : result.items.length === 0 ? <p>Belum ada karyawan di halaman ini.</p> :
       <div className="table-scroll"><table><thead><tr><th>Karyawan</th><th>Email</th><th>Status</th><th>Aksi</th></tr></thead>
         <tbody>{result.items.map((employee) => <tr key={employee.id}>
           <td><strong>{employee.displayName}</strong><br /><small>{employee.employeeCode}</small></td><td>{employee.email}</td>
           <td><span className={`badge ${employee.active && !employee.pending ? 'active' : ''}`}>
-            {!employee.active ? 'Nonaktif' : employee.pending ? 'Menunggu aktivasi' : 'Aktif'}</span></td>
-          <td className="actions"><button className="secondary" onClick={() => { setEdit(employee); setError(''); }}>Edit</button>
+            {!employee.active ? 'Nonaktif' : employee.pending ? 'Perlu kata sandi awal' : 'Aktif'}</span></td>
+          <td className="actions"><button className="secondary" onClick={() => { setEdit(employee); setNotice(''); setError(''); }}>Edit</button>
             {!!employee.active && <button className="secondary" onClick={() => deactivate(employee)}>Nonaktifkan</button>}</td>
         </tr>)}</tbody></table></div>}
     {result && <PageButtons page={page} hasNext={result.hasNext} onChange={setPage} />}
