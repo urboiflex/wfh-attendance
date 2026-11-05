@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ES2023",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "strict": true,
+    "esModuleInterop": true,
+    "experimentalDecorators": true,
+    "skipLibCheck": true,
+    "jsx": "react-jsx",
+    "types": ["node", "multer", "vite/client"],
+    "lib": ["ES2023", "DOM", "DOM.Iterable"]
+  },
+  "include": ["server", "web"]
+}

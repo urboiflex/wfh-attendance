@@ -1,0 +1,44 @@
+{
+  "name": "wfh-attendance",
+  "version": "0.1.0",
+  "private": true,
+  "engines": {
+    "node": "^24.0.0 || ^26.0.0"
+  },
+  "scripts": {
+    "setup": "node scripts/setup.mjs",
+    "db:up": "docker compose up -d --wait mysql",
+    "db:migrate": "tsx --env-file=.env server/migrate.ts",
+    "dev": "concurrently -k -n attendance,api,web \"npm run dev:attendance\" \"npm run dev:api\" \"npm run dev:web\"",
+    "dev:attendance": "tsx watch --env-file=.env server/attendance.ts",
+    "dev:api": "tsx watch --env-file=.env server/api.ts",
+    "dev:web": "vite --config web/vite.config.ts",
+    "build": "tsc --noEmit && vite build --config web/vite.config.ts",
+    "test": "node --env-file=.env --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "@nestjs/common": "^12.3.3",
+    "@nestjs/core": "^12.3.3",
+    "@nestjs/jwt": "^12.0.3",
+    "@nestjs/platform-express": "^12.3.3",
+    "mysql2": "^3.24.6",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "react-router-dom": "^7.18.5",
+    "reflect-metadata": "^0.2.2",
+    "rxjs": "^7.8.2",
+    "sharp": "^0.35.5"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.3.0",
+    "@types/node": "^26.6.6",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.2.1",
+    "concurrently": "^10.0.6",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.6"
+  }
+}
