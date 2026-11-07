@@ -1,5 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, ApiError, errorMessage, json } from './client';
+import { Icon } from './WorkspaceShell';
 
 type Attendance = { id: number; date: string; submittedAt: string; employee?: Employee };
 type Today = { date: string; attendance: Attendance | null };
@@ -68,22 +69,24 @@ export function EmployeeWorkspace() {
   }
 
   return <main className="workspace-main">
-    <h1>Absensi WFH</h1>
-    <p className="muted">{status ? dateLabel(status.date) : 'Waktu Jakarta (WIB)'}</p>
+    <header className="workspace-heading">
+      <h1>Absensi WFH</h1>
+      <p>{status ? dateLabel(status.date) : 'Waktu Jakarta (WIB)'}</p>
+    </header>
     <section className="surface checkin-card">
       <ErrorText value={error} />
       {!status ? error ? <button className="secondary" onClick={load}>Muat ulang</button> : <p role="status">Memeriksa absensi…</p>
         : status.attendance ? <>
-          <span className="badge active">Tercatat</span>
-          <h2>Absensi sudah tercatat</h2>
+          <div className="section-bar"><h2>Absensi sudah tercatat</h2><span className="badge active"><Icon name="check" />Tercatat</span></div>
           <p>{dateLabel(status.attendance.date)} · {timeLabel(status.attendance.submittedAt)}</p>
           <a className="text-link" href={`/api/attendance/${status.attendance.id}/evidence`} target="_blank" rel="noreferrer">Lihat foto bukti</a>
         </> : <>
-          <span className="badge">Belum absen</span>
-          <h2>Unggah foto bukti</h2>
+          <div className="section-bar"><h2>Unggah foto bukti</h2><span className="badge">Belum absen</span></div>
           <p className="muted">Pilih foto JPEG atau PNG dengan ukuran maksimal 2 MiB.</p>
           <form className="stack" onSubmit={submit}>
-            <label>Foto WFH<input type="file" accept="image/jpeg,image/png" required onChange={(event) => {
+            <label className="upload-field"><span className="upload-icon"><Icon name="upload" /></span>
+              <span className="upload-label">Foto WFH<small>{photo?.name ?? 'Pilih foto dari perangkat'}</small></span>
+              <input aria-label="Foto WFH" type="file" accept="image/jpeg,image/png" required onChange={(event) => {
               const chosen = event.currentTarget.files?.[0];
               if (chosen && chosen.size > 2 * 1024 * 1024) {
                 setError('Ukuran foto maksimal 2 MiB.');
@@ -117,6 +120,7 @@ function EmployeeList() {
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [revision, setRevision] = useState(0);
+  const [statusChange, setStatusChange] = useState<number>();
 
   useEffect(() => {
     const controller = new AbortController();
@@ -150,14 +154,20 @@ function EmployeeList() {
     finally { setBusy(false); }
   }
 
-  async function deactivate(employee: Employee) {
-    if (!confirm(`Nonaktifkan akun ${employee.displayName}?`)) return;
+  async function changeAccountStatus(employee: Employee) {
+    const reactivating = !employee.active;
+    if (!reactivating && !confirm(`Nonaktifkan akun ${employee.displayName}?`)) return;
+    setStatusChange(employee.id);
     setError('');
     setNotice('');
     try {
-      await api(`/employees/${employee.id}`, { method: 'DELETE' });
+      const path = `/employees/${employee.id}`;
+      await api(reactivating ? `${path}/reactivate` : path, { method: reactivating ? 'POST' : 'DELETE' });
+      setNotice(reactivating ? 'Akun karyawan diaktifkan kembali.' : 'Akun karyawan dinonaktifkan.');
+      setEdit((current) => current?.id === employee.id ? undefined : current);
       setRevision((value) => value + 1);
     } catch (failure) { setError(errorMessage(failure)); }
+    finally { setStatusChange(undefined); }
   }
 
   return <section className="surface">
@@ -183,7 +193,9 @@ function EmployeeList() {
           <td><span className={`badge ${employee.active && !employee.pending ? 'active' : ''}`}>
             {!employee.active ? 'Nonaktif' : employee.pending ? 'Perlu kata sandi awal' : 'Aktif'}</span></td>
           <td className="actions"><button className="secondary" onClick={() => { setEdit(employee); setNotice(''); setError(''); }}>Edit</button>
-            {!!employee.active && <button className="secondary" onClick={() => deactivate(employee)}>Nonaktifkan</button>}</td>
+            <button className="secondary" disabled={statusChange !== undefined} onClick={() => changeAccountStatus(employee)}>
+              {statusChange === employee.id ? 'Memproses…' : employee.active ? 'Nonaktifkan' : 'Aktifkan kembali'}
+            </button></td>
         </tr>)}</tbody></table></div>}
     {result && <PageButtons page={page} hasNext={result.hasNext} onChange={setPage} />}
   </section>;
@@ -235,14 +247,60 @@ function Monitoring() {
   </section>;
 }
 
-export function HrWorkspace() {
-  const [monitor, setMonitor] = useState(false);
+function AdminAccount() {
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
+  const [notice, setNotice] = useState('');
+
+  async function create(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const fields = new FormData(form);
+    setBusy(true);
+    setError('');
+    setNotice('');
+    try {
+      await api('/admins', json('POST', {
+        displayName: fields.get('displayName'), email: fields.get('email'), password: fields.get('password'),
+      }));
+      form.reset();
+      setNotice('Akun Admin HR dibuat. Sampaikan kata sandi awal secara pribadi.');
+    } catch (failure) {
+      setError(errorMessage(failure));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return <section className="surface checkin-card">
+    <h2>Tambah akun Admin HR</h2>
+    <p className="muted">Akun baru memiliki akses yang sama dengan Admin HR Anda.</p>
+    <form className="stack" onSubmit={create} aria-busy={busy}>
+      <label>Nama lengkap<input name="displayName" required minLength={2} maxLength={100} /></label>
+      <label>Email<input name="email" type="email" required maxLength={254} /></label>
+      <label>Kata sandi awal
+        <input name="password" type="password" autoComplete="new-password" required minLength={12} maxLength={128}
+          aria-describedby="admin-password-hint" />
+      </label>
+      <p className="muted" id="admin-password-hint">Gunakan minimal 12 karakter.</p>
+      <ErrorText value={error} />
+      {notice && <p className="success-message" role="status">{notice}</p>}
+      <button className="primary" disabled={busy}>{busy ? 'Menyimpan…' : 'Buat akun Admin HR'}</button>
+    </form>
+  </section>;
+}
+
+export function HrWorkspace({ view }: { view: 'employees' | 'attendance' | 'admins' }) {
+  const headings = {
+    employees: ['Karyawan', 'Kelola data dan akses akun karyawan.'],
+    attendance: ['Absensi', 'Tinjau catatan kehadiran WFH dan foto bukti.'],
+    admins: ['Akun Admin', 'Berikan akses kepada anggota tim HR.'],
+  };
+  const [title, description] = headings[view];
   return <main className="workspace-main">
-    <h1>Portal Admin HR</h1>
-    <nav className="workspace-tabs" aria-label="Menu Admin HR">
-      <button className="secondary" aria-pressed={!monitor} onClick={() => setMonitor(false)}>Karyawan</button>
-      <button className="secondary" aria-pressed={monitor} onClick={() => setMonitor(true)}>Absensi</button>
-    </nav>
-    {monitor ? <Monitoring /> : <EmployeeList />}
+    <header className="workspace-heading"><h1>{title}</h1><p>{description}</p></header>
+    {view === 'employees' && <EmployeeList />}
+    {view === 'attendance' && <Monitoring />}
+    {view === 'admins' && <AdminAccount />}
   </main>;
 }

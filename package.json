@@ -17,10 +17,12 @@
     "test": "node --env-file=.env --test tests/*.test.mjs"
   },
   "dependencies": {
+    "@fontsource-variable/inter": "^5.3.0",
     "@nestjs/common": "^12.3.3",
     "@nestjs/core": "^12.3.3",
     "@nestjs/jwt": "^12.0.3",
     "@nestjs/platform-express": "^12.3.3",
+    "motion": "^14.9.1",
     "mysql2": "^3.24.6",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",

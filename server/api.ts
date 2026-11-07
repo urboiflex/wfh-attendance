@@ -1,15 +1,15 @@
 import 'reflect-metadata';
 import {
-  BadGatewayException, BadRequestException, Body, ConflictException, Controller, Delete, ForbiddenException,
+  BadGatewayException, BadRequestException, Body, type CanActivate, ConflictException, Controller, Delete, type ExecutionContext, ForbiddenException,
   GatewayTimeoutException, Get, HttpCode, HttpException, Module, NotFoundException, Param, Patch, Post,
-  Query, Req, Res, ServiceUnavailableException, UnauthorizedException, UploadedFile, UseInterceptors,
+  Query, Req, Res, ServiceUnavailableException, UnauthorizedException, UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { JwtService } from '@nestjs/jwt';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
 import { type Actor, type Role, attendanceOrigin, database, env, isDuplicate, maxPhoto } from './config';
 import { hashPassword, verifyPassword } from './security';
 
@@ -28,6 +28,7 @@ interface User extends RowDataPacket, Actor {
   active: number;
   pending: number;
   passwordHash?: string;
+  sessionVersion?: number;
 }
 
 function validate(body: unknown, keys: string[]): Record<string, unknown> {
@@ -59,11 +60,21 @@ function limitAttempts(request: Request, address: string) {
   const now = Date.now();
   for (const [key, attempt] of attempts) if (attempt.expires <= now) attempts.delete(key);
   const ip = request.ip ?? 'local';
-  for (const [key, limit] of [[`ip:${ip}`, 60], [`email:${address}`, 12]] as const) {
+  const ipKey = `ip:${ip}`;
+  const emailKey = `email:${address}`;
+  function charge(key: string, limit: number) {
     const attempt = attempts.get(key) ?? { count: 0, expires: now + 60_000 };
-    if (++attempt.count > limit) throw new HttpException('Terlalu banyak percobaan. Coba lagi dalam satu menit.', 429);
+    if (attempt.count >= limit) throw new HttpException('Terlalu banyak percobaan. Coba lagi dalam satu menit.', 429);
+    attempt.count++;
     attempts.set(key, attempt);
+    return attempt;
   }
+  const ipAttempt = charge(ipKey, 60);
+  const emailAttempt = charge(emailKey, 12);
+  return () => {
+    if (attempts.get(ipKey) === ipAttempt) ipAttempt.count--;
+    if (attempts.get(emailKey) === emailAttempt) attempts.delete(emailKey);
+  };
 }
 
 async function findUser(id: number) {
@@ -73,29 +84,67 @@ async function findUser(id: number) {
 
 async function findLogin(address: string) {
   const [rows] = await pool.execute<User[]>(
-    `SELECT ${userFields}, password_hash AS passwordHash FROM users WHERE email = ?`, [address],
+    `SELECT ${userFields}, password_hash AS passwordHash, session_version AS sessionVersion FROM users WHERE email = ?`, [address],
   );
-  return rows[0];
+  const user = rows[0];
+  return user?.email.toLowerCase() === address ? user : undefined;
+}
+
+async function createAccount(body: Record<string, unknown>, role: Role, employeeCode: string | null) {
+  const name = string(body.displayName, 'Nama', 2, 100);
+  const address = email(body.email);
+  const password = string(body.password, 'Kata sandi awal', 12, 128, false);
+  try {
+    const [result] = await pool.execute<ResultSetHeader>(
+      `INSERT INTO users (role, employee_code, display_name, email, password_hash) VALUES (?, ?, ?, ?, ?)`,
+      [role, employeeCode, name, address, await hashPassword(password)],
+    );
+    return { id: result.insertId };
+  } catch (error) {
+    if (isDuplicate(error)) {
+      throw new ConflictException(employeeCode === null ? 'Email sudah digunakan.' : 'Kode karyawan atau email sudah digunakan.');
+    }
+    throw error;
+  }
 }
 
 function profile(user: User) {
   return { id: user.id, role: user.role, displayName: user.displayName, email: user.email };
 }
 
-async function authenticate(request: Request, required?: Role) {
+function session(request: Request) {
   const token = request.headers.cookie?.split(';').map((part) => part.trim())
     .find((part) => part.startsWith('wfh_session='))?.slice('wfh_session='.length);
-  let claims: { sub: number; role: Role };
+  if (!token) return;
   try {
-    if (!token) throw new Error();
-    claims = jwt.verify(token, { algorithms: ['HS256'] });
+    const claims = jwt.verify<{ sub: number; role: Role; exp: number; version?: number }>(token, { algorithms: ['HS256'] });
+    return { ...claims, digest: createHash('sha256').update(token).digest() };
   } catch {
-    throw new UnauthorizedException('Silakan masuk kembali.');
+    return;
   }
-  const user = await findUser(claims.sub);
+}
+
+async function authenticate(request: Request, required?: Role) {
+  const claims = session(request);
+  if (!claims) throw new UnauthorizedException('Silakan masuk kembali.');
+  const [rows] = await pool.execute<User[]>(
+    `SELECT ${userFields} FROM users WHERE id = ? AND session_version = ?
+     AND NOT EXISTS (SELECT 1 FROM revoked_sessions WHERE token_hash = ?)`, [claims.sub, claims.version ?? 0, claims.digest],
+  );
+  const user = rows[0];
   if (!user?.active || user.pending || user.role !== claims.role) throw new UnauthorizedException('Silakan masuk kembali.');
   if (required && user.role !== required) throw new ForbiddenException('Akses ditolak.');
   return user;
+}
+
+type CheckInRequest = Request & { attendanceActor: Actor };
+
+class EmployeeUploadGuard implements CanActivate {
+  async canActivate(context: ExecutionContext) {
+    const request = context.switchToHttp().getRequest<CheckInRequest>();
+    request.attendanceActor = await authenticate(request, 'EMPLOYEE');
+    return true;
+  }
 }
 
 async function attendanceRequest(user: Actor, path: string, body?: FormData) {
@@ -138,12 +187,18 @@ class ApiController {
     const requestedRole = portal === 'admin' ? 'HR_ADMIN' : 'EMPLOYEE';
     const body = validate(raw, ['email', 'password']);
     const address = email(body.email);
-    const password = string(body.password, 'Kata sandi', 1, 128, false);
-    limitAttempts(request, address);
+    const password = string(body.password, 'Kata sandi', 8, 128, false);
+    const recordSuccess = limitAttempts(request, address);
     const user = await findLogin(address);
     const verified = await verifyPassword(password, user?.passwordHash ?? await dummyHash);
-    if (!verified || !user?.active || user.pending || user.role !== requestedRole) throw new UnauthorizedException(loginError);
-    response.cookie('wfh_session', jwt.sign({ sub: user.id, role: user.role }), { ...cookie, maxAge: 7_200_000 });
+    if (!verified || !user || user.role !== requestedRole) throw new UnauthorizedException(loginError);
+    recordSuccess();
+    if (!user.active && user.role === 'EMPLOYEE') {
+      throw new ForbiddenException('Akun Anda dinonaktifkan sementara. Hubungi Admin HR untuk mengaktifkan kembali akun Anda.');
+    }
+    if (!user.active || user.pending) throw new UnauthorizedException(loginError);
+    response.cookie('wfh_session', jwt.sign({ sub: user.id, role: user.role, version: user.sessionVersion }, { jwtid: randomUUID() }),
+      { ...cookie, maxAge: 7_200_000 });
     return profile(user);
   }
 
@@ -154,7 +209,15 @@ class ApiController {
 
   @Post('auth/logout')
   @HttpCode(204)
-  logout(@Res({ passthrough: true }) response: Response) {
+  async logout(@Req() request: Request, @Res({ passthrough: true }) response: Response) {
+    const claims = session(request);
+    if (claims) {
+      await pool.execute(
+        `INSERT INTO revoked_sessions (token_hash, expires_at) VALUES (?, ?) ON DUPLICATE KEY UPDATE token_hash = token_hash`,
+        [claims.digest, new Date(claims.exp * 1000)],
+      );
+      await pool.execute('DELETE FROM revoked_sessions WHERE expires_at <= UTC_TIMESTAMP()');
+    }
     response.clearCookie('wfh_session', cookie);
   }
 
@@ -183,19 +246,13 @@ class ApiController {
     await authenticate(request, 'HR_ADMIN');
     const body = validate(raw, ['employeeCode', 'displayName', 'email', 'password']);
     const code = string(body.employeeCode, 'Kode karyawan', 1, 24).toUpperCase();
-    const name = string(body.displayName, 'Nama', 2, 100);
-    const address = email(body.email);
-    const password = string(body.password, 'Kata sandi awal', 12, 128, false);
-    try {
-      const [result] = await pool.execute<ResultSetHeader>(
-        `INSERT INTO users (role, employee_code, display_name, email, password_hash)
-         VALUES ('EMPLOYEE', ?, ?, ?, ?)`, [code, name, address, await hashPassword(password)],
-      );
-      return { id: result.insertId };
-    } catch (error) {
-      if (isDuplicate(error)) throw new ConflictException('Kode karyawan atau email sudah digunakan.');
-      throw error;
-    }
+    return createAccount(body, 'EMPLOYEE', code);
+  }
+
+  @Post('admins')
+  async createAdmin(@Req() request: Request, @Body() raw: unknown) {
+    await authenticate(request, 'HR_ADMIN');
+    return createAccount(validate(raw, ['displayName', 'email', 'password']), 'HR_ADMIN', null);
   }
 
   @Patch('employees/:id')
@@ -229,9 +286,20 @@ class ApiController {
   @Delete('employees/:id')
   @HttpCode(204)
   async deactivate(@Req() request: Request, @Param('id') id: string) {
+    await this.setEmployeeActive(request, id, false);
+  }
+
+  @Post('employees/:id/reactivate')
+  @HttpCode(204)
+  async reactivate(@Req() request: Request, @Param('id') id: string) {
+    await this.setEmployeeActive(request, id, true);
+  }
+
+  private async setEmployeeActive(request: Request, id: string, active: boolean) {
     await authenticate(request, 'HR_ADMIN');
     const [result] = await pool.execute<ResultSetHeader>(
-      "UPDATE users SET is_active = FALSE WHERE id = ? AND role = 'EMPLOYEE'", [positive(id)],
+      `UPDATE users SET session_version = session_version + IF(is_active <> ?, 1, 0), is_active = ?
+       WHERE id = ? AND role = 'EMPLOYEE'`, [active, active, positive(id)],
     );
     if (!result.affectedRows) throw new NotFoundException('Karyawan tidak ditemukan.');
   }
@@ -242,13 +310,13 @@ class ApiController {
   }
 
   @Post('attendance')
+  @UseGuards(EmployeeUploadGuard)
   @UseInterceptors(FileInterceptor('photo', { limits: { fileSize: maxPhoto, files: 1, fields: 0, parts: 2 } }))
-  async checkIn(@Req() request: Request, @UploadedFile() photo?: Express.Multer.File) {
-    const user = await authenticate(request, 'EMPLOYEE');
-    if (!photo) throw new BadRequestException('Pilih satu foto terlebih dahulu.');
+  async checkIn(@Req() request: CheckInRequest, @UploadedFile() photo?: Express.Multer.File) {
+    if (!photo?.buffer.length) throw new BadRequestException('Pilih satu foto terlebih dahulu.');
     const data = new FormData();
     data.set('photo', new Blob([new Uint8Array(photo.buffer)], { type: photo.mimetype }), 'photo');
-    return (await attendanceRequest(user, '', data)).json();
+    return (await attendanceRequest(request.attendanceActor, '', data)).json();
   }
 
   @Get('attendance')

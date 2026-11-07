@@ -37,6 +37,11 @@ input:not([type="checkbox"]):focus { background: #fff; border-color: var(--accen
   min-height: 41px; padding: 9px 16px; border: 1px solid transparent; border-radius: 10px;
   font-weight: 650; line-height: 1.3;
 }
+.primary, .secondary, .shell-icon-button, .shell-nav a, .upload-field, .theme-choice, .password-field button {
+  transition: background-color 160ms ease, color 160ms ease, border-color 160ms ease,
+    box-shadow 160ms ease, scale 120ms ease, filter 120ms ease;
+}
+.primary:active:not(:disabled), .secondary:active:not(:disabled), .shell-icon-button:active { scale: .98; }
 .primary { color: white; background: var(--accent); }
 .primary:hover:not(:disabled) { background: var(--accent-hover); }
 .secondary { color: var(--ink); border-color: var(--line); background: white; }
@@ -49,27 +54,10 @@ input:not([type="checkbox"]):focus { background: #fff; border-color: var(--accen
 .session-loading { padding: 35px; }
 .app-alert { padding: 10px 16px; background: #fff0ef; }
 .app-alert button { margin-left: 10px; }
-.workspace { min-height: 100svh; background: #f4f7fb; }
-.workspace-header { display: flex; align-items: center; justify-content: space-between; gap: 16px; padding: 13px clamp(16px, 4vw, 60px); background: #fff; border-bottom: 1px solid var(--line); }
-.workspace-header > div { display: flex; align-items: center; gap: 13px; }
-.workspace-main { max-width: 1130px; margin: auto; padding: clamp(24px, 4vw, 53px) 16px; }
-.workspace-main h1 { font-size: clamp(30px, 5vw, 47px); line-height: 1.07; letter-spacing: -.055em; margin-bottom: 10px; }
-.workspace-tabs, .section-bar, .actions, .pagination { display: flex; align-items: center; gap: 9px; flex-wrap: wrap; }
-.surface { display: grid; gap: 14px; margin-top: 18px; padding: clamp(17px, 3vw, 31px); border: 1px solid var(--line); border-radius: 17px; background: white; }
-.checkin-card { max-width: 560px; }
-.section-bar { justify-content: space-between; }
-.employee-form { display: flex; flex-wrap: wrap; align-items: end; gap: 12px; padding: 13px; border: 1px solid var(--line); border-radius: 12px; }
-.employee-form label { flex: 1 1 155px; }
-.filter-check { display: flex; align-items: center; }
-.table-scroll { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; text-align: left; font-size: 14px; }
-th, td { padding: 11px 9px; border-bottom: 1px solid var(--line); }
-th, .muted, small { color: var(--muted); }
-.badge { width: fit-content; display: inline-block; padding: 5px 9px; border-radius: 90px; background: var(--surface); font-size: 12px; font-weight: 700; }
-.badge.active { background: #e7f7ed; color: #1b5b37; }
-.evidence { display: block; width: auto; max-width: 100%; max-height: 330px; border-radius: 11px; object-fit: contain; }
-.evidence-preview { margin: 0; }
-.evidence-preview figcaption { margin-top: 9px; }
-@media (max-width: 760px) {
-  .workspace-header > div > span { display: none; }
+
+@media (prefers-reduced-motion: reduce) {
+  .primary, .secondary, .shell-icon-button, .shell-nav a, .upload-field, .theme-choice, .password-field button {
+    transition: none;
+  }
+  .primary:active:not(:disabled), .secondary:active:not(:disabled), .shell-icon-button:active { scale: 1; }
 }

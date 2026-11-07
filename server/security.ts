@@ -10,7 +10,9 @@ export async function hashPassword(password: string): Promise<string> {
 }
 
 export async function verifyPassword(password: string, hash: string): Promise<boolean> {
-  const [salt, hex] = hash.split(':');
+  const match = /^([a-f0-9]{32}):([a-f0-9]{128})$/i.exec(hash);
+  if (!match) return false;
+  const [, salt, hex] = match;
   const key = await deriveKey(password, salt, 64) as Buffer;
   return timingSafeEqual(key, Buffer.from(hex, 'hex'));
 }

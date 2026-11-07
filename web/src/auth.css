@@ -85,12 +85,20 @@
   border-radius: 5px;
   color: var(--auth-on-action);
   background: var(--auth-action);
-  transition: background-color 160ms ease;
 }
 .auth-form .primary:hover:not(:disabled) { background: var(--auth-action-hover); }
 .auth-form .primary:active:not(:disabled) { filter: brightness(.9); }
 .auth-form .error-message { background: #3a2024; color: #ffc6c7; border-radius: 5px; }
+.auth-form .auth-field-error { color: #ffc6c7; font-size: .875rem; font-weight: 400; }
 .auth-help { color: var(--auth-muted); font-size: .875rem; line-height: 1.5; }
+.auth-help a {
+  display: inline-flex;
+  min-height: 44px;
+  align-items: center;
+  color: var(--auth-text);
+  font-weight: 650;
+  text-underline-offset: 4px;
+}
 
 .auth-hero {
   display: flex;
@@ -122,8 +130,4 @@
   }
   .auth-heading { margin-bottom: 1.25rem; }
   .auth-hero { display: none; }
-}
-
-@media (prefers-reduced-motion: reduce) {
-  .auth-form .primary { transition: none; }
 }

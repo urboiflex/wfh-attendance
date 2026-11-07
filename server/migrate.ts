@@ -29,6 +29,12 @@ const migrations = [
     INDEX attendance_date_order (attendance_date, submitted_at_utc, id)
   ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4`,
   `ALTER TABLE users ADD COLUMN requires_activation BOOLEAN NOT NULL DEFAULT FALSE`,
+  `CREATE TABLE IF NOT EXISTS revoked_sessions (
+    token_hash BINARY(32) PRIMARY KEY,
+    expires_at DATETIME NOT NULL,
+    INDEX revoked_sessions_expiry (expires_at)
+  ) ENGINE=InnoDB`,
+  `ALTER TABLE users ADD COLUMN session_version INT UNSIGNED NOT NULL DEFAULT 0`,
 ];
 
 function provisionRuntimeUsers() {
@@ -37,10 +43,12 @@ function provisionRuntimeUsers() {
     if (!/^[a-f0-9]{48}$/.test(password)) throw new Error('Use a setup-generated runtime database password.');
     const account = `'wfh_${name}'@'%'`;
     const grants = name === 'api' ? 'SELECT, INSERT, UPDATE ON wfh.users' : 'SELECT, INSERT ON wfh.attendance';
-    return [
+    const statements = [
       `CREATE USER IF NOT EXISTS ${account} IDENTIFIED BY '${password}';`,
       `GRANT ${grants} TO ${account};`,
     ];
+    if (name === 'api') statements.push(`GRANT SELECT, INSERT, UPDATE, DELETE ON wfh.revoked_sessions TO ${account};`);
+    return statements;
   });
   const result = spawnSync('docker', [
     'compose', 'exec', '-T', 'mysql', 'sh', '-c', 'MYSQL_PWD="$MYSQL_ROOT_PASSWORD" exec mysql -u root',
@@ -61,8 +69,10 @@ async function migrate() {
       const version = index + 1;
       const [result] = await connection.execute<RowDataPacket[]>('SELECT version FROM schema_migrations WHERE version = ?', [version]);
       if (result.length > 0) continue;
-      const [existing] = version === 3 ? await connection.query<RowDataPacket[]>(
-        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = 'requires_activation'",
+      const addedColumn = version === 3 ? 'requires_activation' : version === 5 ? 'session_version' : undefined;
+      const [existing] = addedColumn ? await connection.execute<RowDataPacket[]>(
+        "SELECT COLUMN_NAME FROM INFORMATION_SCHEMA.COLUMNS WHERE TABLE_SCHEMA = DATABASE() AND TABLE_NAME = 'users' AND COLUMN_NAME = ?",
+        [addedColumn],
       ) : [[]];
       if (existing.length === 0) await connection.query(sql);
       await connection.execute('INSERT INTO schema_migrations (version) VALUES (?)', [version]);
@@ -77,6 +87,17 @@ async function migrate() {
         INSERT INTO users (role, employee_code, display_name, email, password_hash)
         VALUES (?, ?, ?, ?, ?) ON DUPLICATE KEY UPDATE id = id
       `, [role, code, name, email, await hashPassword(env(secret))]);
+    }
+    if (process.env.DEMO_EXTRA_HR_EMAIL || process.env.DEMO_EXTRA_HR_PASSWORD) {
+      const email = env('DEMO_EXTRA_HR_EMAIL').trim().toLowerCase();
+      const password = env('DEMO_EXTRA_HR_PASSWORD');
+      if (email.length > 254 || !/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || password.length < 8 || password.length > 128) {
+        throw new Error('The optional demo admin needs a valid email and an 8–128 character password.');
+      }
+      await connection.execute(`
+        INSERT INTO users (role, display_name, email, password_hash)
+        VALUES ('HR_ADMIN', 'Admin HR Demo', ?, ?) ON DUPLICATE KEY UPDATE id = id
+      `, [email, await hashPassword(password)]);
     }
     console.log('Schema, runtime accounts, and demo users are ready.');
   } finally {

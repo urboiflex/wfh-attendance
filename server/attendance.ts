@@ -1,12 +1,12 @@
 import 'reflect-metadata';
 import {
-  BadRequestException, Body, ConflictException, Controller, ForbiddenException, Get, Headers,
-  Module, NotFoundException, Param, PayloadTooLargeException, Post, Query, Res,
-  UnsupportedMediaTypeException, UploadedFile, UseInterceptors,
+  BadRequestException, type CanActivate, ConflictException, Controller, type ExecutionContext, ForbiddenException, Get, Headers,
+  Module, NotFoundException, Param, PayloadTooLargeException, Post, Query, Req, Res,
+  UnsupportedMediaTypeException, UploadedFile, UseGuards, UseInterceptors,
 } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
 import { FileInterceptor } from '@nestjs/platform-express';
-import type { Response } from 'express';
+import type { Request, Response } from 'express';
 import type { ResultSetHeader, RowDataPacket } from 'mysql2';
 import sharp from 'sharp';
 import { type Actor, database, env, isDuplicate, jakartaDate, maxPhoto } from './config';
@@ -27,6 +27,18 @@ function actor(headers: Record<string, string>): Actor {
   return { id, role };
 }
 
+type InternalUploadRequest = Request & { attendanceActor: Actor };
+
+class InternalUploadGuard implements CanActivate {
+  canActivate(context: ExecutionContext) {
+    const request = context.switchToHttp().getRequest<InternalUploadRequest>();
+    const current = actor(request.headers as Record<string, string>);
+    if (current.role !== 'EMPLOYEE') throw new ForbiddenException();
+    request.attendanceActor = current;
+    return true;
+  }
+}
+
 function dateValue(value: unknown): value is string {
   if (typeof value !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(value)) return false;
   const parsed = new Date(value);
@@ -34,9 +46,9 @@ function dateValue(value: unknown): value is string {
 }
 
 async function normalize(photo: Express.Multer.File | undefined) {
-  if (!photo) throw new BadRequestException('Pilih satu foto terlebih dahulu.');
-  const image = sharp(photo.buffer, { limitInputPixels: 16_000_000, failOn: 'warning' });
+  if (!photo?.buffer.length) throw new BadRequestException('Pilih satu foto terlebih dahulu.');
   try {
+    const image = sharp(photo.buffer, { limitInputPixels: 16_000_000, failOn: 'warning' });
     const meta = await image.metadata();
     if ((meta.format !== 'jpeg' && meta.format !== 'png') || (meta.pages ?? 1) !== 1) {
       throw new UnsupportedMediaTypeException('Gunakan satu foto JPEG atau PNG.');
@@ -70,10 +82,10 @@ class AttendanceController {
   }
 
   @Post('attendance')
+  @UseGuards(InternalUploadGuard)
   @UseInterceptors(upload)
-  async create(@Headers() headers: Record<string, string>, @UploadedFile() photo?: Express.Multer.File) {
-    const current = actor(headers);
-    if (current.role !== 'EMPLOYEE') throw new ForbiddenException();
+  async create(@Req() request: InternalUploadRequest, @UploadedFile() photo?: Express.Multer.File) {
+    const current = request.attendanceActor;
     const submittedAt = new Date();
     const date = jakartaDate(submittedAt);
     const { bytes, mime } = await normalize(photo);
