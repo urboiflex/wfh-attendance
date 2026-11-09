@@ -192,10 +192,10 @@ function EmployeeList() {
           <td><strong>{employee.displayName}</strong><br /><small>{employee.employeeCode}</small></td><td>{employee.email}</td>
           <td><span className={`badge ${employee.active && !employee.pending ? 'active' : ''}`}>
             {!employee.active ? 'Nonaktif' : employee.pending ? 'Perlu kata sandi awal' : 'Aktif'}</span></td>
-          <td className="actions"><button className="secondary" onClick={() => { setEdit(employee); setNotice(''); setError(''); }}>Edit</button>
+          <td className="employee-actions"><div className="actions"><button className="secondary" onClick={() => { setEdit(employee); setNotice(''); setError(''); }}>Edit</button>
             <button className="secondary" disabled={statusChange !== undefined} onClick={() => changeAccountStatus(employee)}>
               {statusChange === employee.id ? 'Memproses…' : employee.active ? 'Nonaktifkan' : 'Aktifkan kembali'}
-            </button></td>
+            </button></div></td>
         </tr>)}</tbody></table></div>}
     {result && <PageButtons page={page} hasNext={result.hasNext} onChange={setPage} />}
   </section>;
