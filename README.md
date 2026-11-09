@@ -69,5 +69,3 @@ With MySQL and both API processes running, run `npm.cmd test` for the integratio
 The tests use real MySQL, create synthetic fixtures, and clean up the fixture rows they own. Run the suite on the local assessment database.
 
 The implementation uses parameterized SQL with `mysql2` and a versioned migration runner. The public API owns employee accounts and session revocations. The private service can read and insert attendance. The API limits employee account creation and editing to HR and gives HR read-only access to attendance.
-
-The authentication screens use a [Tate Modern photograph by Jonny James](https://unsplash.com/photos/a-black-and-white-photo-of-a-curved-concrete-structure-ulFAi1jkNcA), under the [Unsplash License](https://unsplash.com/license).
