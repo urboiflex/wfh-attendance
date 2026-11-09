@@ -2,15 +2,6 @@
 
 Local demo for the Dexa Group full-stack assessment. Karyawan uses a blue sign-in page and Admin HR uses a separate silver sign-in page. HR creates and edits employee accounts.
 
-## Reviewer documentation
-
-- [Architecture](docs/architecture.md) explains the services, database, authentication, and tradeoffs.
-- [API reference](docs/api.md) documents routes, roles, request bodies, and errors.
-- [Product requirements](docs/PRD.md) maps the objectives and use cases to the code and tests.
-- [Design](docs/design.md) describes scope, screens, and chosen policies.
-- [Demo and interview guide](docs/demo-and-interview.md) provides a five-minute walkthrough and answers to rehearse.
-- [Verification record](docs/verification.md) records the final submission checks.
-
 ## Run locally
 
 Requires Docker Desktop with the Linux engine running, Docker Compose, Git, and Node.js 24 or 26. In PowerShell, clone the private repository using a GitHub account with access.

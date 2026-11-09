@@ -2,3 +2,17 @@ node_modules/
 dist/
 .env
 *.log
+
+# Local planning and assistant configuration
+/docs/
+/.agents/
+/.codex/
+/.claude/
+/.cursor/
+/skills/
+[Aa][Gg][Ee][Nn][Tt].md
+[Aa][Gg][Ee][Nn][Tt][Ss].md
+[Ss][Kk][Ii][Ll][Ll].md
+[Cc][Ll][Aa][Uu][Dd][Ee].md
+architecture.md
+ARCHITECTURE.md
